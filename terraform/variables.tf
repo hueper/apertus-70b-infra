@@ -25,9 +25,9 @@ variable "github_repo" {
 
 # Endpoint Scheduler Variables
 variable "enable_endpoint_scheduler" {
-  description = "Enable automatic start/stop scheduling for the SageMaker endpoint"
+  description = "Enable EventBridge cron scheduling for automatic endpoint start/stop. Lambda functions are always deployed regardless of this setting."
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "endpoint_start_schedule" {

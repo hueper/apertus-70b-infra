@@ -7,14 +7,17 @@ Terraform configuration for deploying the [Teuken-7B-instruct](https://huggingfa
 ```
 SageMaker Endpoint (ml.g5.2xlarge) ← Endpoint Config ← Model ← Custom TGI container (ECR)
                                                                        ↑
-Lambda scheduler (EventBridge cron)                          Secrets Manager (HF token)
-  stop:  6 PM UTC Mon–Fri (delete endpoint)
-  start: 7 AM UTC Mon–Fri (recreate endpoint)
+Lambda lifecycle (always deployed)                           Secrets Manager (HF token)
+  start: aws lambda invoke --function-name teuken-llm-start-endpoint
+  stop:  aws lambda invoke --function-name teuken-llm-stop-endpoint
+
+EventBridge scheduling (optional, enable_endpoint_scheduler=true)
+  start: 7 AM UTC Mon–Fri    stop: 6 PM UTC Mon–Fri
 
 GitHub Actions (OIDC) → builds and pushes container image to ECR on merge to main
 ```
 
-The SageMaker endpoint is **ephemeral** — intentionally created and deleted daily by the Lambda scheduler to avoid idle costs (~$1.50/hr). It is not tracked in Terraform state. Everything else (model, endpoint config, ECR, IAM, Lambdas, EventBridge) is long-lived and Terraform-managed.
+The SageMaker endpoint is **ephemeral** — created and deleted by the Lambda functions to avoid idle costs (~$1.50/hr). It is not tracked in Terraform state. The start/stop Lambdas are always deployed for manual invocation; EventBridge cron scheduling is an optional layer controlled by `enable_endpoint_scheduler`. Everything else (model, endpoint config, ECR, IAM, Lambdas) is long-lived and Terraform-managed.
 
 Container images are built by CI and tagged with the Git SHA. Local Docker builds are not required.
 
@@ -61,8 +64,9 @@ aws secretsmanager put-secret-value \
   --secret-id teuken-llm/hf-token \
   --secret-string "hf_YOUR_TOKEN"
 
-# 6. Bootstrap the endpoint (first time only — the scheduler handles it after this)
+# 6. Start the endpoint
 aws lambda invoke --function-name teuken-llm-start-endpoint --payload '{}' response.json
+# (if enable_endpoint_scheduler=true, EventBridge will handle subsequent start/stop automatically)
 ```
 
 > **Note:** The `-target` apply in step 1 is a one-time bootstrap to break the circular dependency (CI needs ECR + OIDC role to push, Terraform needs an image tag to create the model). After the first image is pushed, all subsequent deploys use a normal `terraform apply`.
@@ -77,7 +81,7 @@ infra/
 │   └── build-image.yml  CI: build and push container image to ECR
 ├── terraform/
 │   ├── main.tf          Model, endpoint config, ECR, IAM, Secrets Manager
-│   ├── lambda.tf        Endpoint scheduler (Lambda + EventBridge)
+│   ├── lambda.tf        Endpoint lifecycle (Lambda always-on + optional EventBridge)
 │   ├── ci.tf            GitHub OIDC provider + CI IAM role
 │   ├── variables.tf
 │   ├── container/       Dockerfile + entrypoint for TGI inference
@@ -91,7 +95,7 @@ To permanently shut down the system and ensure the endpoint cannot be recreated:
 ```bash
 cd terraform
 
-# 1. Disable the endpoint scheduler (removes Lambdas and schedules)
+# 1. Disable automatic scheduling (removes EventBridge rules; Lambdas remain for manual use)
 terraform apply -var="enable_endpoint_scheduler=false"
 
 # 2. Delete the endpoint (if running)
@@ -109,6 +113,6 @@ terraform destroy
 | `github_repo` | *(required)* | GitHub repository (org/repo) for OIDC trust |
 | `aws_region` | `eu-central-1` | AWS region |
 | `instance_type` | `ml.g5.2xlarge` | SageMaker GPU instance |
-| `enable_endpoint_scheduler` | `true` | Auto start/stop |
+| `enable_endpoint_scheduler` | `false` | EventBridge cron scheduling (Lambdas always deployed) |
 | `endpoint_start_schedule` | `cron(0 7 ? * MON-FRI *)` | Start time (UTC) |
 | `endpoint_stop_schedule` | `cron(0 18 ? * MON-FRI *)` | Stop time (UTC) |

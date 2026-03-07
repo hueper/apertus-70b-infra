@@ -1,6 +1,7 @@
 # =============================================================================
-# Lambda-based SageMaker Endpoint Scheduler
-# Automatically starts/stops the endpoint based on EventBridge schedules
+# SageMaker Endpoint Lifecycle Management
+# Lambda functions for starting/stopping the endpoint (always deployed).
+# EventBridge cron scheduling is optional (controlled by enable_endpoint_scheduler).
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -10,17 +11,60 @@
 data "aws_caller_identity" "current" {}
 
 data "archive_file" "stop_endpoint" {
-  count       = var.enable_endpoint_scheduler ? 1 : 0
   type        = "zip"
   source_file = "${path.module}/lambda/stop_endpoint.py"
   output_path = "${path.module}/lambda/stop_endpoint.zip"
 }
 
 data "archive_file" "start_endpoint" {
-  count       = var.enable_endpoint_scheduler ? 1 : 0
   type        = "zip"
   source_file = "${path.module}/lambda/start_endpoint.py"
   output_path = "${path.module}/lambda/start_endpoint.zip"
+}
+
+# -----------------------------------------------------------------------------
+# State migration: lifecycle resources moved from conditional (count) to always-on.
+# These blocks can be removed after one successful apply in all environments.
+# -----------------------------------------------------------------------------
+
+moved {
+  from = data.archive_file.stop_endpoint[0]
+  to   = data.archive_file.stop_endpoint
+}
+
+moved {
+  from = data.archive_file.start_endpoint[0]
+  to   = data.archive_file.start_endpoint
+}
+
+moved {
+  from = aws_iam_role.endpoint_scheduler[0]
+  to   = aws_iam_role.endpoint_scheduler
+}
+
+moved {
+  from = aws_iam_role_policy.endpoint_scheduler[0]
+  to   = aws_iam_role_policy.endpoint_scheduler
+}
+
+moved {
+  from = aws_cloudwatch_log_group.stop_endpoint[0]
+  to   = aws_cloudwatch_log_group.stop_endpoint
+}
+
+moved {
+  from = aws_cloudwatch_log_group.start_endpoint[0]
+  to   = aws_cloudwatch_log_group.start_endpoint
+}
+
+moved {
+  from = aws_lambda_function.stop_endpoint[0]
+  to   = aws_lambda_function.stop_endpoint
+}
+
+moved {
+  from = aws_lambda_function.start_endpoint[0]
+  to   = aws_lambda_function.start_endpoint
 }
 
 # -----------------------------------------------------------------------------
@@ -28,8 +72,7 @@ data "archive_file" "start_endpoint" {
 # -----------------------------------------------------------------------------
 
 resource "aws_iam_role" "endpoint_scheduler" {
-  count = var.enable_endpoint_scheduler ? 1 : 0
-  name  = "${var.project_name}-endpoint-scheduler-role"
+  name = "${var.project_name}-endpoint-scheduler-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -44,9 +87,8 @@ resource "aws_iam_role" "endpoint_scheduler" {
 }
 
 resource "aws_iam_role_policy" "endpoint_scheduler" {
-  count = var.enable_endpoint_scheduler ? 1 : 0
-  name  = "${var.project_name}-endpoint-scheduler-policy"
-  role  = aws_iam_role.endpoint_scheduler[0].id
+  name = "${var.project_name}-endpoint-scheduler-policy"
+  role = aws_iam_role.endpoint_scheduler.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -84,13 +126,11 @@ resource "aws_iam_role_policy" "endpoint_scheduler" {
 # -----------------------------------------------------------------------------
 
 resource "aws_cloudwatch_log_group" "stop_endpoint" {
-  count             = var.enable_endpoint_scheduler ? 1 : 0
   name              = "/aws/lambda/${var.project_name}-stop-endpoint"
   retention_in_days = 14
 }
 
 resource "aws_cloudwatch_log_group" "start_endpoint" {
-  count             = var.enable_endpoint_scheduler ? 1 : 0
   name              = "/aws/lambda/${var.project_name}-start-endpoint"
   retention_in_days = 14
 }
@@ -100,17 +140,16 @@ resource "aws_cloudwatch_log_group" "start_endpoint" {
 # -----------------------------------------------------------------------------
 
 resource "aws_lambda_function" "stop_endpoint" {
-  count         = var.enable_endpoint_scheduler ? 1 : 0
   function_name = "${var.project_name}-stop-endpoint"
   description   = "Stops (deletes) the SageMaker endpoint to save costs"
-  role          = aws_iam_role.endpoint_scheduler[0].arn
+  role          = aws_iam_role.endpoint_scheduler.arn
   handler       = "stop_endpoint.lambda_handler"
   runtime       = var.lambda_runtime
   timeout       = 30
   memory_size   = 128
 
-  filename         = data.archive_file.stop_endpoint[0].output_path
-  source_code_hash = data.archive_file.stop_endpoint[0].output_base64sha256
+  filename         = data.archive_file.stop_endpoint.output_path
+  source_code_hash = data.archive_file.stop_endpoint.output_base64sha256
 
   environment {
     variables = {
@@ -125,17 +164,16 @@ resource "aws_lambda_function" "stop_endpoint" {
 }
 
 resource "aws_lambda_function" "start_endpoint" {
-  count         = var.enable_endpoint_scheduler ? 1 : 0
   function_name = "${var.project_name}-start-endpoint"
   description   = "Starts (creates) the SageMaker endpoint using existing config"
-  role          = aws_iam_role.endpoint_scheduler[0].arn
+  role          = aws_iam_role.endpoint_scheduler.arn
   handler       = "start_endpoint.lambda_handler"
   runtime       = var.lambda_runtime
   timeout       = 30
   memory_size   = 128
 
-  filename         = data.archive_file.start_endpoint[0].output_path
-  source_code_hash = data.archive_file.start_endpoint[0].output_base64sha256
+  filename         = data.archive_file.start_endpoint.output_path
+  source_code_hash = data.archive_file.start_endpoint.output_base64sha256
 
   environment {
     variables = {
@@ -172,21 +210,21 @@ resource "aws_cloudwatch_event_target" "stop_endpoint" {
   count     = var.enable_endpoint_scheduler ? 1 : 0
   rule      = aws_cloudwatch_event_rule.stop_endpoint[0].name
   target_id = "StopEndpointLambda"
-  arn       = aws_lambda_function.stop_endpoint[0].arn
+  arn       = aws_lambda_function.stop_endpoint.arn
 }
 
 resource "aws_cloudwatch_event_target" "start_endpoint" {
   count     = var.enable_endpoint_scheduler ? 1 : 0
   rule      = aws_cloudwatch_event_rule.start_endpoint[0].name
   target_id = "StartEndpointLambda"
-  arn       = aws_lambda_function.start_endpoint[0].arn
+  arn       = aws_lambda_function.start_endpoint.arn
 }
 
 resource "aws_lambda_permission" "stop_endpoint" {
   count         = var.enable_endpoint_scheduler ? 1 : 0
   statement_id  = "AllowEventBridgeInvoke"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.stop_endpoint[0].function_name
+  function_name = aws_lambda_function.stop_endpoint.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.stop_endpoint[0].arn
 }
@@ -195,7 +233,7 @@ resource "aws_lambda_permission" "start_endpoint" {
   count         = var.enable_endpoint_scheduler ? 1 : 0
   statement_id  = "AllowEventBridgeInvoke"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.start_endpoint[0].function_name
+  function_name = aws_lambda_function.start_endpoint.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.start_endpoint[0].arn
 }
@@ -206,12 +244,12 @@ resource "aws_lambda_permission" "start_endpoint" {
 
 output "stop_endpoint_lambda_arn" {
   description = "ARN of the stop endpoint Lambda function"
-  value       = var.enable_endpoint_scheduler ? aws_lambda_function.stop_endpoint[0].arn : null
+  value       = aws_lambda_function.stop_endpoint.arn
 }
 
 output "start_endpoint_lambda_arn" {
   description = "ARN of the start endpoint Lambda function"
-  value       = var.enable_endpoint_scheduler ? aws_lambda_function.start_endpoint[0].arn : null
+  value       = aws_lambda_function.start_endpoint.arn
 }
 
 output "endpoint_stop_schedule" {
