@@ -10,6 +10,7 @@ python3 -m vllm.entrypoints.openai.api_server \
   --port 8000 \
   --max-model-len 32768 \
   --dtype bfloat16 \
+  --enforce-eager \
   --trust-remote-code &
 
 exec python3 /opt/serve.py
