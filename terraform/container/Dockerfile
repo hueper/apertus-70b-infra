@@ -4,7 +4,7 @@ FROM ${BASE_IMAGE}
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/* && \
     pip install --no-cache-dir fastapi uvicorn httpx && \
     pip install --no-cache-dir \
-        git+https://github.com/huggingface/transformers.git \
+        transformers \
         accelerate
 
 COPY serve.py /opt/serve.py
