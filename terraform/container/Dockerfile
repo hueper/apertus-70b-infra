@@ -5,9 +5,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /
     pip install --no-cache-dir fastapi uvicorn httpx && \
     pip install --no-cache-dir \
         git+https://github.com/huggingface/transformers.git \
-        accelerate && \
-    sed -i 's/AutoConfig.register("aimv2", AIMv2Config)/AutoConfig.register("aimv2", AIMv2Config, exist_ok=True)/' \
-        /usr/local/lib/python3.12/dist-packages/vllm/transformers_utils/configs/ovis.py
+        accelerate
 
 COPY serve.py /opt/serve.py
 COPY entrypoint.sh /opt/entrypoint.sh
