@@ -8,6 +8,7 @@ Input  (POST /invocations): {"inputs": "...", "parameters": {"max_new_tokens": .
 Output (POST /invocations): {"generated_text": "..."}
 """
 
+import os
 import time
 from contextlib import asynccontextmanager
 
@@ -17,6 +18,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
 
 VLLM_BASE = "http://localhost:8000"
+MODEL_NAME = os.environ.get("HF_MODEL_ID", "swiss-ai/Apertus-70B-Instruct-2509")
 
 
 def _wait_for_vllm(timeout: int = 600, interval: int = 5) -> None:
@@ -56,7 +58,7 @@ def invocations(body: dict):
     messages = [{"role": "user", "content": prompt}]
 
     payload = {
-        "model": "default",
+        "model": MODEL_NAME,
         "messages": messages,
         "max_tokens": params.get("max_new_tokens", 256),
         "temperature": params.get("temperature", 0.8),
